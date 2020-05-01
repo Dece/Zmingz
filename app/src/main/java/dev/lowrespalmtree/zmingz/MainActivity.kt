@@ -76,6 +76,7 @@ class MainActivity: AppCompatActivity() {
         when (requestCode) {
             REQ_PICK_IMG, REQ_PICK_VID -> handlePickResult(requestCode, resultCode, data)
             REQ_TAKE_IMG -> handleTakeImageResult(resultCode)
+            REQ_TAKE_VID -> handleTakeVideoResult(resultCode, data)
             else -> super.onActivityResult(requestCode, resultCode, data)
         }
     }
@@ -155,7 +156,8 @@ class MainActivity: AppCompatActivity() {
                 startActivityForResult(captureIntent, REQ_TAKE_IMG)
             }
             buttonCameraVideo.id -> {
-
+                val captureIntent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+                startActivityForResult(captureIntent, REQ_TAKE_VID)
             }
         }
     }
@@ -187,6 +189,14 @@ class MainActivity: AppCompatActivity() {
         processMedia(cameraImagePath, MediaType.IMAGE)
     }
 
+    private fun handleTakeVideoResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK)
+            return
+        data?.data
+            ?.let { processMedia(it, MediaType.VIDEO) }
+            ?: return Unit. also { Log.e(TAG, "No data in intent or invalid URI") }
+    }
+
     /** Process media at URI, copying to a local cache file for FFmpeg beforehand. */
     private fun processMedia(uri: Uri, type: MediaType) {
         val uriPath = uri.path
@@ -211,7 +221,15 @@ class MainActivity: AppCompatActivity() {
         videoLayout.visibility = View.GONE
         Toast.makeText(this, R.string.please_wait, Toast.LENGTH_SHORT).show()
 
-        val extension = getFileExtension(path)
+        val extension = getFileExtension(path).let {
+            if (it.isEmpty())
+                when (type) {
+                    MediaType.IMAGE -> "jpg"
+                    MediaType.VIDEO -> "mp4"
+                }
+            else
+                it
+        }
         val outputFile1 = File.createTempFile("output1", ".$extension", mediaCacheDir)
         MirrorTask(WeakReference(this), type, 1)
             .execute(path, outputFile1.canonicalPath, VF1)
@@ -302,7 +320,15 @@ class MainActivity: AppCompatActivity() {
             return
         }
 
-        val extension = getFileExtension(path).let { if (it.isEmpty()) "xxx" else it }
+        val extension = getFileExtension(path).let {
+            if (it.isEmpty())
+                when (type) {
+                    MediaType.IMAGE -> "jpg"
+                    MediaType.VIDEO -> "mp4"
+                }
+            else
+                it
+        }
         val outputFile = File(mediaDir.canonicalPath, "${System.currentTimeMillis()}.$extension")
         if (!outputFile.createNewFile()) {
             Log.e(TAG, "Failed to create new file: $outputFile")
