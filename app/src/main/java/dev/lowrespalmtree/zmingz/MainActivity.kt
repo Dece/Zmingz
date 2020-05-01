@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.AsyncTask
 import android.os.Bundle
 import android.os.Environment
+import android.os.Parcelable
 import android.provider.MediaStore
 import android.util.Log
 import android.view.View
@@ -35,11 +36,24 @@ class MainActivity: AppCompatActivity() {
     /** Temporary type for the media to save, to use after perms being granted. */
     private var savingType = MediaType.IMAGE
 
-    private enum class MediaType { IMAGE, VIDEO }
+    enum class MediaType { IMAGE, VIDEO }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        if (intent.action == Intent.ACTION_SEND) {
+            val type = if (intent.type?.startsWith("image") == true) {
+                MediaType.IMAGE
+            } else if (intent.type?.startsWith("video") == true) {
+                MediaType.VIDEO
+            } else {
+                null
+            }
+            val uri = intent.getParcelableExtra<Parcelable>(Intent.EXTRA_STREAM) as? Uri
+            if (type != null && uri != null)
+                processMedia(uri, type)
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -112,11 +126,19 @@ class MainActivity: AppCompatActivity() {
     @Suppress("UNUSED_PARAMETER")
     private fun handlePickResult(requestCode: Int, resultCode: Int, data: Intent?) {
         val uri = data?.data
-                ?: return Unit .also { Log.e(TAG, "No intent or data") }
-        val uriPath = uri.path
-                ?: return Unit .also { Log.e(TAG, "No path in URI") }
-        val extension = getFileExtension(uriPath)
+            ?: return Unit.also { Log.e(TAG, "No intent or data") }
+        val type = when (requestCode) {
+            REQ_PICK_IMG -> MediaType.IMAGE
+            REQ_PICK_VID -> MediaType.VIDEO
+            else -> return
+        }
+        processMedia(uri, type)
+    }
 
+    private fun processMedia(uri: Uri, type: MediaType) {
+        val uriPath = uri.path
+            ?: return Unit.also { Log.e(TAG, "No path in URI") }
+        val extension = getFileExtension(uriPath)
         // Copy picked file to cache dir for FFmpeg.
         val inputFile = File.createTempFile("input", ".$extension", cacheDir)
         contentResolver.openInputStream(uri).use { inputStream ->
@@ -139,16 +161,16 @@ class MainActivity: AppCompatActivity() {
         Toast.makeText(this, R.string.please_wait, Toast.LENGTH_SHORT).show()
 
         val outputFile1 = File.createTempFile("output1", ".$extension", mediaCacheDir)
-        MirrorTask(WeakReference(this), requestCode, 1)
+        MirrorTask(WeakReference(this), type, 1)
             .execute(inputFile.canonicalPath, outputFile1.canonicalPath, VF1)
         val outputFile2 = File.createTempFile("output2", ".$extension", mediaCacheDir)
-        MirrorTask(WeakReference(this), requestCode, 2)
+        MirrorTask(WeakReference(this), type, 2)
             .execute(inputFile.canonicalPath, outputFile2.canonicalPath, VF2)
     }
 
     class MirrorTask(
         private val activity: WeakReference<MainActivity>,
-        private val requestCode: Int,
+        private val type: MediaType,
         private val index: Int
     ): AsyncTask<String, Void, Boolean>() {
         private lateinit var outputPath: String
@@ -167,34 +189,37 @@ class MainActivity: AppCompatActivity() {
 
         override fun onPostExecute(result: Boolean?) {
             if (result == true) {
-                activity.get()?.updateViews(requestCode, index, outputPath)
+                activity.get()?.updateViews(type, index, outputPath)
             }
         }
 
     }
 
-    internal fun updateViews(requestCode: Int, viewIndex: Int, outputPath: String) {
-        if (requestCode == REQ_PICK_IMG) {
-            if (imageLayout.visibility != View.VISIBLE)
-                imageLayout.visibility = View.VISIBLE
-            val mirrored = BitmapFactory.decodeFile(outputPath)
-            val view = when (viewIndex) {
-                1 -> { path1 = outputPath; imageView1 }
-                2 -> { path2 = outputPath; imageView2 }
-                else -> return
+    internal fun updateViews(type: MediaType, viewIndex: Int, outputPath: String) {
+        when (type) {
+            MediaType.IMAGE -> {
+                if (imageLayout.visibility != View.VISIBLE)
+                    imageLayout.visibility = View.VISIBLE
+                val mirrored = BitmapFactory.decodeFile(outputPath)
+                val view = when (viewIndex) {
+                    1 -> { path1 = outputPath; imageView1 }
+                    2 -> { path2 = outputPath; imageView2 }
+                    else -> return
+                }
+                view.setImageBitmap(mirrored)
             }
-            view.setImageBitmap(mirrored)
-        } else if (requestCode == REQ_PICK_VID) {
-            if (videoLayout.visibility != View.VISIBLE)
-                videoLayout.visibility = View.VISIBLE
-            val view = when (viewIndex) {
-                1 -> { path1 = outputPath; videoView1 }
-                2 -> { path2 = outputPath; videoView2 }
-                else -> return
+            MediaType.VIDEO -> {
+                if (videoLayout.visibility != View.VISIBLE)
+                    videoLayout.visibility = View.VISIBLE
+                val view = when (viewIndex) {
+                    1 -> { path1 = outputPath; videoView1 }
+                    2 -> { path2 = outputPath; videoView2 }
+                    else -> return
+                }
+                view.setVideoPath(outputPath)
+                view.setOnPreparedListener { mp -> mp.isLooping = true }
+                view.start()
             }
-            view.setVideoPath(outputPath)
-            view.setOnPreparedListener { mp -> mp.isLooping = true }
-            view.start()
         }
     }
 
