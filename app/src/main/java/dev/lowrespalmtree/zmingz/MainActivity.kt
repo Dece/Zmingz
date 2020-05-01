@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.AsyncTask
 import android.os.Bundle
 import android.os.Environment
@@ -13,6 +14,7 @@ import android.view.View
 import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
 import com.arthenica.mobileffmpeg.FFmpeg
@@ -80,30 +82,32 @@ class MainActivity: AppCompatActivity() {
     }
 
     fun openViewMenu(v: View) {
+        val path = when (v.id) {
+            imageView1.id, videoView1.id -> path1
+            imageView2.id, videoView2.id -> path2
+            else -> return
+        }
+        val type = mediaTypeFromViewId(v.id)
+            ?: return
+
         val menu = PopupMenu(this, v)
-        val saveItem = menu.menu.add(R.string.save)
-        val shareItem = menu.menu.add(R.string.share)
-        menu.setOnMenuItemClickListener { item ->
-            val path = when (v.id) {
-                imageView1.id, videoView1.id -> path1
-                imageView2.id, videoView2.id -> path2
-                else -> return@setOnMenuItemClickListener false
-            }
-            when (item.itemId) {
-                saveItem.itemId -> {
-                    val type = when (v.id) {
-                        imageView1.id, imageView2.id -> MediaType.IMAGE
-                        videoView1.id, videoView2.id -> MediaType.VIDEO
-                        else -> return@setOnMenuItemClickListener false
-                    }
-                    save(path, type)
-                }
-                else -> {}
-            }
+        menu.menu.add(R.string.save).setOnMenuItemClickListener {
+            save(path, type)
+            true
+        }
+        menu.menu.add(R.string.share).setOnMenuItemClickListener {
+            share(path, type)
             true
         }
         menu.show()
     }
+
+    private fun mediaTypeFromViewId(id: Int): MediaType? =
+        when (id) {
+            imageView1.id, imageView2.id -> MediaType.IMAGE
+            videoView1.id, videoView2.id -> MediaType.VIDEO
+            else -> null
+        }
 
     @Suppress("UNUSED_PARAMETER")
     private fun handlePickResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -123,14 +127,21 @@ class MainActivity: AppCompatActivity() {
             }
         }
 
+        val mediaCacheDir = File(cacheDir, "media")
+        if (!mediaCacheDir.exists() && !mediaCacheDir.mkdir()) {
+            Log.e(TAG, "Could not create cache media dir")
+            Toast.makeText(this, R.string.write_error, Toast.LENGTH_SHORT).show()
+            return
+        }
+
         imageLayout.visibility = View.GONE
         videoLayout.visibility = View.GONE
         Toast.makeText(this, R.string.please_wait, Toast.LENGTH_SHORT).show()
 
-        val outputFile1 = File.createTempFile("output1", ".$extension", cacheDir)
+        val outputFile1 = File.createTempFile("output1", ".$extension", mediaCacheDir)
         MirrorTask(WeakReference(this), requestCode, 1)
             .execute(inputFile.canonicalPath, outputFile1.canonicalPath, VF1)
-        val outputFile2 = File.createTempFile("output2", ".$extension", cacheDir)
+        val outputFile2 = File.createTempFile("output2", ".$extension", mediaCacheDir)
         MirrorTask(WeakReference(this), requestCode, 2)
             .execute(inputFile.canonicalPath, outputFile2.canonicalPath, VF2)
     }
@@ -228,6 +239,24 @@ class MainActivity: AppCompatActivity() {
             }
         }
         Log.i(TAG, "File saved at $outputFile")
+    }
+
+    private fun share(path: String, type: MediaType) {
+        val uri = FileProvider.getUriForFile(
+            this,
+            "dev.lowrespalmtree.fileprovider",
+            File(path)
+        )
+        Log.i(TAG, "share with uri $uri")
+        val shareIntent = Intent().also {
+            it.action = Intent.ACTION_SEND
+            it.putExtra(Intent.EXTRA_STREAM, uri)
+            it.type = when (type) {
+                MediaType.IMAGE -> "image/*"
+                MediaType.VIDEO -> "video/*"
+            }
+        }
+        startActivity(Intent.createChooser(shareIntent, getString(R.string.send)))
     }
 
     companion object {
