@@ -83,6 +83,28 @@
         app:layout_constraintStart_toStartOf="parent"
         style="@style/Widget.AppCompat.ButtonBar">
 
+        <ImageButton
+            android:id="@+id/buttonCamera"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:onClick="openCamera"
+            android:src="@android:drawable/ic_menu_camera"
+            style="?android:attr/buttonBarButtonStyle"
+            android:contentDescription="@android:string/untitled" />
+
+        <ImageButton
+            android:id="@+id/buttonCameraVideo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:onClick="openCamera"
+            android:src="@android:drawable/ic_media_play"
+            style="?android:attr/buttonBarButtonStyle"
+            android:contentDescription="@android:string/untitled" />
+
         <Button
             android:id="@+id/buttonImage"
             android:layout_width="wrap_content"

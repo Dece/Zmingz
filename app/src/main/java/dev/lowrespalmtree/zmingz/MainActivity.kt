@@ -1,6 +1,7 @@
 package dev.lowrespalmtree.zmingz
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -16,6 +17,7 @@ import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.net.toFile
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_CANCEL
 import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
 import com.arthenica.mobileffmpeg.FFmpeg
@@ -35,6 +37,20 @@ class MainActivity: AppCompatActivity() {
     private var savingPath = ""
     /** Temporary type for the media to save, to use after perms being granted. */
     private var savingType = MediaType.IMAGE
+    /** Path for storing camera image. */
+    private var cameraImagePath = ""
+
+    /** Path to media cache dir, ensuring it exists. */
+    private val mediaCacheDir: File?
+        get() {
+            val mediaCacheDir = File(cacheDir, "media")
+            if (!mediaCacheDir.exists() && !mediaCacheDir.mkdir()) {
+                Log.e(TAG, "Could not create cache media dir")
+                Toast.makeText(this, R.string.write_error, Toast.LENGTH_SHORT).show()
+                return null
+            }
+            return mediaCacheDir
+        }
 
     enum class MediaType { IMAGE, VIDEO }
 
@@ -59,6 +75,7 @@ class MainActivity: AppCompatActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
             REQ_PICK_IMG, REQ_PICK_VID -> handlePickResult(requestCode, resultCode, data)
+            REQ_TAKE_IMG -> handleTakeImageResult(resultCode)
             else -> super.onActivityResult(requestCode, resultCode, data)
         }
     }
@@ -78,6 +95,13 @@ class MainActivity: AppCompatActivity() {
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
+
+    private fun getUriForFile(file: File): Uri =
+        FileProvider.getUriForFile(
+            this,
+            "dev.lowrespalmtree.fileprovider",
+            file
+        )
 
     fun openFile(v: View) {
         val req: Int
@@ -116,6 +140,26 @@ class MainActivity: AppCompatActivity() {
         menu.show()
     }
 
+    fun openCamera(v: View) {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            Log.e(TAG, "No camera feature")
+            return
+        }
+
+        when (v.id) {
+            buttonCamera.id -> {
+                val inputFile = File(mediaCacheDir, "${System.currentTimeMillis()}.jpg")
+                cameraImagePath = inputFile.canonicalPath
+                val captureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    .apply { putExtra(MediaStore.EXTRA_OUTPUT, getUriForFile(inputFile)) }
+                startActivityForResult(captureIntent, REQ_TAKE_IMG)
+            }
+            buttonCameraVideo.id -> {
+
+            }
+        }
+    }
+
     private fun mediaTypeFromViewId(id: Int): MediaType? =
         when (id) {
             imageView1.id, imageView2.id -> MediaType.IMAGE
@@ -125,6 +169,8 @@ class MainActivity: AppCompatActivity() {
 
     @Suppress("UNUSED_PARAMETER")
     private fun handlePickResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK)
+            return
         val uri = data?.data
             ?: return Unit.also { Log.e(TAG, "No intent or data") }
         val type = when (requestCode) {
@@ -135,6 +181,13 @@ class MainActivity: AppCompatActivity() {
         processMedia(uri, type)
     }
 
+    private fun handleTakeImageResult(resultCode: Int) {
+        if (resultCode != Activity.RESULT_OK)
+            return
+        processMedia(cameraImagePath, MediaType.IMAGE)
+    }
+
+    /** Process media at URI, copying to a local cache file for FFmpeg beforehand. */
     private fun processMedia(uri: Uri, type: MediaType) {
         val uriPath = uri.path
             ?: return Unit.also { Log.e(TAG, "No path in URI") }
@@ -149,23 +202,22 @@ class MainActivity: AppCompatActivity() {
             }
         }
 
-        val mediaCacheDir = File(cacheDir, "media")
-        if (!mediaCacheDir.exists() && !mediaCacheDir.mkdir()) {
-            Log.e(TAG, "Could not create cache media dir")
-            Toast.makeText(this, R.string.write_error, Toast.LENGTH_SHORT).show()
-            return
-        }
+        processMedia(inputFile.canonicalPath, type)
+    }
 
+    /** Start the async mirroring tasks. */
+    private fun processMedia(path: String, type: MediaType) {
         imageLayout.visibility = View.GONE
         videoLayout.visibility = View.GONE
         Toast.makeText(this, R.string.please_wait, Toast.LENGTH_SHORT).show()
 
+        val extension = getFileExtension(path)
         val outputFile1 = File.createTempFile("output1", ".$extension", mediaCacheDir)
         MirrorTask(WeakReference(this), type, 1)
-            .execute(inputFile.canonicalPath, outputFile1.canonicalPath, VF1)
+            .execute(path, outputFile1.canonicalPath, VF1)
         val outputFile2 = File.createTempFile("output2", ".$extension", mediaCacheDir)
         MirrorTask(WeakReference(this), type, 2)
-            .execute(inputFile.canonicalPath, outputFile2.canonicalPath, VF2)
+            .execute(path, outputFile2.canonicalPath, VF2)
     }
 
     class MirrorTask(
@@ -267,11 +319,7 @@ class MainActivity: AppCompatActivity() {
     }
 
     private fun share(path: String, type: MediaType) {
-        val uri = FileProvider.getUriForFile(
-            this,
-            "dev.lowrespalmtree.fileprovider",
-            File(path)
-        )
+        val uri = getUriForFile(File(path))
         Log.i(TAG, "share with uri $uri")
         val shareIntent = Intent().also {
             it.action = Intent.ACTION_SEND
@@ -289,6 +337,8 @@ class MainActivity: AppCompatActivity() {
         private const val REQ_PICK_IMG = 1
         private const val REQ_PICK_VID = 2
         private const val REQ_WRITE_PERM = 3
+        private const val REQ_TAKE_IMG = 4
+        private const val REQ_TAKE_VID = 5
         private const val VF1 = "crop=iw/2:ih:0:0,split[left][tmp];[tmp]hflip[right];[left][right] hstack"
         private const val VF2 = "crop=iw/2:ih:iw/2:0,split[left][tmp];[tmp]hflip[right];[right][left] hstack"
 
